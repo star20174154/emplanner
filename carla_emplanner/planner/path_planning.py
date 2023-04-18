@@ -1,7 +1,8 @@
-#   -*- coding: utf-8 -*-
-# @Author  : Weilong Zhu
-# @Time    : 2022-05-27,09:18
-# @File    : motion_plan_path_planning.py
+# -*- coding: utf-8 -*-
+# @Time    : 2023/4/18 22:09
+# @Author  : Star
+# @File    : path.py
+# @Software: PyCharm
 
 
 """
@@ -16,6 +17,68 @@ import time
 """
 首先进行必要的坐标转换
 """
+def frenet_2_x_y_theta_kappa(plan_start_s, plan_start_l, enriched_s_list: list, enriched_l_list: list,
+                             frenet_path_opt: list,
+                             s_map: list):
+    """  已验证
+    首先进行必要的坐标转换
+    将增加采样点后动态规划得到的s-l路径转换为直角坐标系下路径信息x, y, theta, kappa
+    param:  plan_start_s: 规划起点的s,l
+            plan_start_l:
+            enriched_s_list: 增加采样点后的s,l
+            enriched_l_list:
+            frenet_path_opt: 优化后的参考线[(x, y, theta, kappa), ... ]
+            s_map: 参考线对应的s_map
+    return: 直角坐标系下的路径列表，list类型[(x, y, theta, kappa), ...]
+    """
+    target_xy = []
+    # 确定规划起点在s_map中的索引,并加入目标路径中
+    proj_x, proj_y, proj_theta, proj_kappa, pre_match_index = cal_proj_point(plan_start_s, 0, frenet_path_opt, s_map)
+    nor_v = np.array([-math.sin(proj_theta), math.cos(proj_theta)])  # 法向量***************************************
+    cur_x, cur_y, = np.array([proj_x, proj_y]) + plan_start_l * nor_v
+    target_xy.append((cur_x, cur_y))
+
+    for i in range(len(enriched_l_list)):
+        cur_s = enriched_s_list[i]
+        cur_l = enriched_l_list[i]
+        # cal_proj_point里面存在一个问题，在这里解决，就是如果动态规划纵向采样过长，cur_s会超出s_map的范围，即无法映射，这里直接截断
+        if cur_s > s_map[-1]:
+            break
+        proj_x, proj_y, proj_theta, proj_kappa, pre_match_index = cal_proj_point(cur_s, pre_match_index,
+                                                                                 frenet_path_opt, s_map)
+        nor_v = np.array([-math.sin(proj_theta), math.cos(proj_theta)])  # 法向量***************************************
+        cur_x, cur_y, = np.array([proj_x, proj_y]) + cur_l * nor_v
+        target_xy.append((cur_x, cur_y))
+    target_path = planner_utiles.smooth_reference_line(target_xy)
+
+    return target_path
+
+
+def cal_proj_point(s, pre_match_index, frenet_path_opt: list, s_map: list):
+    """
+    确定给定的s在参考线上的投影点的路径信息
+    param:  s: 要计算投影点的位矢s
+            pre_match_index: 上个投影点的索引
+            frenet_path_opt:  优化后的参考线
+            s_map: 位矢map
+    return: 投影点的路径信息 (x, y, theta, kappa), 起始匹配点的索引
+    """
+    # 确定s在s_map中的索引
+    start_s_match_index = pre_match_index
+    while s_map[start_s_match_index + 1] < s:  # 这里存在一点问题，如果动态规划采样点过长，会超出s_map的范围
+        start_s_match_index += 1
+        # if start_s_match_index == (len(s_map) - 1):
+        #     break
+    mp_x, mp_y, mp_theta, mp_kappa = frenet_path_opt[start_s_match_index]  # 取出投影点的路径信息
+    ds = s - s_map[start_s_match_index]  # 计算规划起点的投影点和匹配点之间的弧长
+    mp_tou_v = np.array([math.cos(mp_theta), math.sin(mp_theta)])
+    r_m = np.array([mp_x, mp_y])  # 匹配点位矢
+    proj_x, proj_y = r_m + ds * mp_tou_v  # 近似投影点位置矢量
+    proj_theta = mp_theta + mp_kappa * ds
+    proj_kappa = mp_kappa
+    res = (proj_x, proj_y, proj_theta, proj_kappa, start_s_match_index)
+    return res
+
 
 
 def Quadratic_planning(l_min, l_max, plan_start_l, plan_start_dl, plan_start_ddl, dp_sampling_res=2,
@@ -24,24 +87,24 @@ def Quadratic_planning(l_min, l_max, plan_start_l, plan_start_dl, plan_start_ddl
                        host_d1=3, host_d2=3, host_w=3):
     """
     二次规划实现更加平滑的避障
-    :param l_min: 二次规划的上下界
-    :param l_max:
-    :param plan_start_l: 规划起点的信息
-    :param plan_start_dl:
-    :param plan_start_ddl:
-    :param dp_sampling_res:  这里是动态规划采用的采样分辨率，作为参数来指导二次规划
-    :param w_cost_l: 参考线代价，使规划的路线向参考线靠近
-    :param w_cost_dl: 平滑代价
-    :param w_cost_ddl:
-    :param w_cost_dddl:
-    :param w_cost_centre: 凸空间中央代价，使参考线向凸空间中心靠近
-    :param w_cost_end_l: 终点的状态代价（希望path的终点状态为（0，0，0））
-    :param w_cost_end_dl:
-    :param w_cost_end_ddl:
-    :param host_d1: 质心到车辆前后轴的距离
-    :param host_d2:
-    :param host_w: host的宽度
-    :return: 二次规划得到的轨迹信息qp_path_l, qp_path_dl, qp_path_ddl
+    param:  l_min: 二次规划的上下界（点的凸空间）
+            l_max:
+            plan_start_l: 规划起点的信息
+            plan_start_dl:
+            plan_start_ddl:
+            dp_sampling_res:  这里是动态规划采用的采样分辨率，作为参数来指导二次规划
+            w_cost_l: 参考线代价，使规划的路线向参考线靠近
+            w_cost_dl: 平滑代价
+            w_cost_ddl:
+            w_cost_dddl:
+            w_cost_centre: 凸空间中央代价，使参考线向凸空间中心靠近
+            w_cost_end_l: 终点的状态代价（希望path的终点状态为（0，0，0））
+            w_cost_end_dl:
+            w_cost_end_ddl:
+            host_d1: 质心到车辆前后轴的距离
+            host_d2:
+            host_w: host的宽度
+    return: qp_path_l, qp_path_dl, qp_path_ddl: 二次规划得到的轨迹信息
     """
     n = len(l_min)
     # print("***************n***********", n)
@@ -156,7 +219,7 @@ def Quadratic_planning(l_min, l_max, plan_start_l, plan_start_dl, plan_start_ddl
                             A=cvxopt.matrix(Aeq), b=cvxopt.matrix(beq)
                             )
     print("the time cost of cvxopt.solvers.qp", time.time() - begin_time)
-    qp_path_l = res['x'][0::3]
+    qp_path_l = res['x'][0::3]      # 从第1个元素开始，每隔3个元素取1个
     qp_path_dl = res['x'][1::3]
     qp_path_ddl = res['x'][2::3]
     return list(qp_path_l), list(qp_path_dl), list(qp_path_ddl)
@@ -538,64 +601,4 @@ def cal_obs_cost(w_cost_collision, square_d: np.ndarray, danger_dis=4, safe_dis=
     return cost
 
 
-def frenet_2_x_y_theta_kappa(plan_start_s, plan_start_l, enriched_s_list: list, enriched_l_list: list,
-                             frenet_path_opt: list,
-                             s_map: list):
-    """  已验证
-    首先进行必要的坐标转换
-    将增加采样点后动态规划得到的s-l路径转换为直角坐标系下路径信息x, y, theta, kappa
-    param:  plan_start_s: 规划起点的s,l
-            plan_start_l:
-            enriched_s_list: 增加采样点后的s,l
-            enriched_l_list:
-            frenet_path_opt: 优化后的参考线[(x, y, theta, kappa), ... ]
-            s_map: 参考线对应的s_map
-    return: 直角坐标系下的路径列表，list类型[(x, y, theta, kappa), ...]
-    """
-    target_xy = []
-    # 确定规划起点在s_map中的索引,并加入目标路径中
-    proj_x, proj_y, proj_theta, proj_kappa, pre_match_index = cal_proj_point(plan_start_s, 0, frenet_path_opt, s_map)
-    nor_v = np.array([-math.sin(proj_theta), math.cos(proj_theta)])  # 法向量***************************************
-    cur_x, cur_y, = np.array([proj_x, proj_y]) + plan_start_l * nor_v
-    target_xy.append((cur_x, cur_y))
 
-    for i in range(len(enriched_l_list)):
-        cur_s = enriched_s_list[i]
-        cur_l = enriched_l_list[i]
-        # cal_proj_point里面存在一个问题，在这里解决，就是如果动态规划纵向采样过长，cur_s会超出s_map的范围，即无法映射，这里直接截断
-        if cur_s > s_map[-1]:
-            break
-        proj_x, proj_y, proj_theta, proj_kappa, pre_match_index = cal_proj_point(cur_s, pre_match_index,
-                                                                                 frenet_path_opt, s_map)
-        nor_v = np.array([-math.sin(proj_theta), math.cos(proj_theta)])  # 法向量***************************************
-        cur_x, cur_y, = np.array([proj_x, proj_y]) + cur_l * nor_v
-        target_xy.append((cur_x, cur_y))
-    target_path = planner_utiles.smooth_reference_line(target_xy)
-
-    return target_path
-
-
-def cal_proj_point(s, pre_match_index, frenet_path_opt: list, s_map: list):
-    """
-    确定给定s在参考线上的投影点的路径信息
-    :param s: 要计算投影点的弧长s
-    :param pre_match_index: 上个投影点的索引
-    :param frenet_path_opt:  优化后的参考线
-    :param s_map: 弧长map
-    :return: 投影点的路径信息 (x, y, theta, kappa)
-    """
-    # 确定s在s_map中的索引
-    start_s_match_index = pre_match_index
-    while s_map[start_s_match_index + 1] < s:  # 这里存在一点问题，如果动态规划采样点过长，会超出s_map的范围
-        start_s_match_index += 1
-        # if start_s_match_index == (len(s_map) - 1):
-        #     break
-    mp_x, mp_y, mp_theta, mp_kappa = frenet_path_opt[start_s_match_index]  # 取出投影点的路径信息
-    ds = s - s_map[start_s_match_index]  # 计算规划起点的投影点和匹配点之间的弧长
-    mp_tou_v = np.array([math.cos(mp_theta), math.sin(mp_theta)])
-    r_m = np.array([mp_x, mp_y])  # 匹配点位矢
-    proj_x, proj_y = r_m + ds * mp_tou_v  # 近似投影点位置矢量
-    proj_theta = mp_theta + mp_kappa * ds
-    proj_kappa = mp_kappa
-    res = (proj_x, proj_y, proj_theta, proj_kappa, start_s_match_index)
-    return res
