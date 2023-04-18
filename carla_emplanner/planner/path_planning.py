@@ -542,14 +542,15 @@ def frenet_2_x_y_theta_kappa(plan_start_s, plan_start_l, enriched_s_list: list, 
                              frenet_path_opt: list,
                              s_map: list):
     """  已验证
+    首先进行必要的坐标转换
     将增加采样点后动态规划得到的s-l路径转换为直角坐标系下路径信息x, y, theta, kappa
-    :param plan_start_s: 规划起点的s,l
-    :param plan_start_l:
-    :param enriched_s_list: 增加从采样点后的s,l
-    :param enriched_l_list:
-    :param frenet_path_opt: 优化后的参考线[(x, y, theta, kappa), ... ]
-    :param s_map: 参考线对应的s_map
-    :return: 直角坐标系下的路径列表，list类型[(x, y, theta, kappa), ...]
+    param:  plan_start_s: 规划起点的s,l
+            plan_start_l:
+            enriched_s_list: 增加采样点后的s,l
+            enriched_l_list:
+            frenet_path_opt: 优化后的参考线[(x, y, theta, kappa), ... ]
+            s_map: 参考线对应的s_map
+    return: 直角坐标系下的路径列表，list类型[(x, y, theta, kappa), ...]
     """
     target_xy = []
     # 确定规划起点在s_map中的索引,并加入目标路径中
