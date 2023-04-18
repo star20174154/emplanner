@@ -266,6 +266,7 @@ def cal_lmin_lmax(dp_path_s, dp_path_l, obs_s_list, obs_l_list, obs_length, obs_
             """障碍物位于规划路线右侧"""
             print("障碍物位于规划路线右侧")
             for j in range(obs_s_min_index, obs_s_max_index + 1):
+                # l_max[j]为所有决策为向右绕过障碍物的l边界的最小值
                 lmax[j] = min(lmax[j], obs_l_list[i] - obs_width / 2)
         else:
             """障碍物位于规划路线左侧"""
